@@ -14,6 +14,9 @@
     background:blue;
     color:white;
 }
+.caret {
+    outline: 1px solid black;
+}
 </style>
 <script src="editcontext.js"></script>
 <script>
@@ -70,15 +73,6 @@ class EditableView {
         let html = this.editModel.asHtml();
         if (html !== "") {
             this.viewElement.innerHTML = html;
-            if (!this.viewElement.querySelector('.selection')) {
-                let positions = this.editModel.getCaretAndParagraph();
-                // Multiply paragraph position/index by two to account for the <br> that is inbetween
-                // each line
-                let currentParagraphTextNode = this.viewElement.childNodes[positions.paragraph*2];
-                this.caretRange.setStart(currentParagraphTextNode, positions.caret);
-                this.caretRange.setEnd(currentParagraphTextNode, positions.caret);
-                this.caretRange.insertNode(this.caret);
-            }
         } else {
             this.viewElement.innerHTML = "";
             this.viewElement.appendChild(this.caret);
@@ -109,65 +103,144 @@ class EditableView {
     }
 }
 
-class Selection {
-    constructor() {
-        this.unposition();
-    }
-
-    isPositioned() {
-        return (this.paragraphIndex !== -1 && this.offset !== -1);
+class Position {
+    constructor(x, y) {
+        x = (x !== undefined) ? x : -1;
+        y = (y !== undefined) ? y : -1;
+        this.set(x, y);
     }
 
     unposition() {
-        this.paragraphIndex = -1;
-        this.offset = -1;
+        this.set(-1, -1);
     }
 
-    set(paragraphIndex, offset) {
-        this.paragraphIndex = paragraphIndex;
-        this.offset = offset;
+    isPositioned() {
+        assert((this.y === -1) === (this.x === -1), "x and y positioning must be in sync");
+        return (this.y !== -1 && this.x !== -1);
     }
+
     equals(other) {
-        return (this.paragraphIndex == other.paragraphIndex && this.offset == other.offset);
+        assert(other.__proto__ === Position.prototype, "Can only test equality against another Position object");
+        return (this.y === other.y && this.x === other.x);
+    }
+
+    assign(other) {
+        assert(other.__proto__ === Position.prototype, "Can only assign positions to another Position object");
+        this.x = other.x;
+        this.y = other.y;
+    }
+
+    set(x, y) {
+        assert(typeof x === "number", "Position.x must be a number");
+        assert(typeof y === "number", "Position.y must be a number");
+        assert(x !== NaN, "Position.x must not be NaN");
+        assert(y !== NaN, "Position.y must not be NaN");
+        this.x = x;
+        this.y = y;
+    }
+}
+
+class Selection {
+    constructor() {
+        this.anchor = new Position();
+        this.focus = new Position();
+    }
+
+    unposition() {
+        this.anchor.unposition();
+        this.focus.unposition();
+    }
+
+    isEmpty() {
+        return this.anchor.equals(this.focus);
+    }
+
+    isPositioned() {
+        return this.anchor.isPositioned();
+    }
+
+    ensureSelection(x, y) {
+        if (!this.anchor.isPositioned()) {
+            this.anchor.set(x, y);
+            this.focus.set(x, y);
+        }
+    }
+
+    // start() and end() are based on document position, and doesn't provide
+    // information about the anchor or focus.
+    start() {
+        if (this.anchor.isPositioned()) {
+            if (this.focus.y < this.anchor.y) {
+                return this.focus;
+            } else if (this.focus.y > this.anchor.y) {
+                return this.anchor;
+            } else {
+                return (this.focus.x < this.anchor.x) ? this.focus : this.anchor;
+            }
+        } else {
+            return null;
+        }
+    }
+
+    end() {
+        let startPosition = this.start();
+        if (startPosition === null) {
+            return null;
+        }
+        return startPosition === this.anchor ? this.focus : this.anchor;
     }
 }
 
 class EditModel {
     constructor(editContext) {
-        this.textParagraphs = [];
-        this.paragraphIndex = 0;
-        this.textParagraphs[this.paragraphIndex] = [];
-        this.caretPosition = 0;
-        this.desiredCaretPosition = 0;
-        this.selectionStart = new Selection();
-        this.selectionEnd = new Selection();
+        this.textRows = [];
+        this.caretPosition = new Position(0, 0);
+        this.textRows[this.caretPosition.y] = [];
+        this.desiredCaretX = 0;
+
+        this.selection = new Selection();
+
         this.CaretMovement = { LEFT:0, RIGHT:1, WORDLEFT:2, WORDRIGHT:3, HOME:4, END:5, UP: 6, DOWN: 7};
     }
 
     asHtml() {
         let html = "";
-        this.textParagraphs.forEach((paragraph, index) => {
-            // HACK - empty paragraphs need a text node in order to place the caret
-            if (paragraph.length === 0) {
-                html += " ";
+        let selectionStart = this.selection.start();
+        let selectionEnd = this.selection.end();
+        this.textRows.forEach((row, index) => {
+
+            let selectionStartX = (selectionStart && selectionStart.y === index) ? selectionStart.x : -1;
+            let selectionEndX = (selectionEnd && selectionEnd.y === index) ? selectionEnd.x : -1;
+            let offsetRealized = 0;
+            if (selectionStart) {
+                if (selectionStartX !== -1) {
+                    // Lay down start selection element
+                    html += row.slice(0, selectionStartX).join('');
+                    if (selectionStart === this.selection.focus) {
+                        html += "<span class='caret'></span>";
+                    }
+                    html += "<span class='selection'>";
+                    offsetRealized = selectionStartX;
+                }
+                if (selectionEndX !== -1) {
+                    html += row.slice(offsetRealized, selectionEndX).join('');
+                    html += "</span>";
+                    if (selectionEnd === this.selection.focus) {
+                        html += "<span class='caret'></span>";
+                    }
+                    offsetRealized = selectionEndX;
+                }
+            } else {
+                if (this.caretPosition.y === index) {
+                    html += row.slice(0, this.caretPosition.x).join('');
+                    html += "<span class='caret'></span>";
+                    offsetRealized = this.caretPosition.x;
+
+                }
             }
 
-            let selectionStartOffset = this.selectionStart.paragraphIndex === index ? this.selectionStart.offset : -1;
-            let selectionEndOffset = this.selectionEnd.paragraphIndex === index ? this.selectionEnd.offset : -1;
-            let offsetRealized = 0;
-            if (selectionStartOffset !== -1) {
-                // Lay down start selection element
-                html += paragraph.slice(0, selectionStartOffset).join('');
-                html += "<span class='selection'>";
-                offsetRealized = selectionStartOffset;
-            }
-            if (selectionEndOffset !== -1) {
-                html += paragraph.slice(offsetRealized, selectionEndOffset).join('');
-                html += "</span>";
-                offsetRealized = selectionEndOffset;
-            }
-            if (offsetRealized != paragraph.length) {
-                html += paragraph.slice(offsetRealized, paragraph.length).join('');
+            if (offsetRealized != row.length) {
+                html += row.slice(offsetRealized, row.length).join('');
             }
 
             html += "<br>";
@@ -177,220 +250,168 @@ class EditModel {
     }
 
     updateText(text) {
-        this.textParagraphs[this.paragraphIndex].splice(this.caretPosition, 0, text);
-        this.caretPosition += text.length;
-        this.desiredCaretPosition = this.caretPosition;
+        this.textRows[this.caretPosition.y].splice(this.caretPosition.x, 0, text);
+        this.caretPosition.set(this.caretPosition.x + text.length, this.caretPosition.y);
+        this.desiredCaretX = this.caretPosition.x;
     }
 
-    getCaretAndParagraph() {
-        return { caret: this.caretPosition, paragraph: this.paragraphIndex };
+    getCaretPosition() {
+        return this.caretPosition;
     }
 
-    currentParagraph() {
-        return this.textParagraphs[this.paragraphIndex];
+    currentRow() {
+        return this.textRows[this.caretPosition.y];
     }
 
-    updateSelection(movement) {
+    movePosition(position, movement) {
         switch (movement) {
             case this.CaretMovement.LEFT:
-                if (!this.selectionStart.isPositioned()) {
-                    if (this.caretPosition !== 0) {
-                        this.selectionStart.set(this.paragraphIndex, this.caretPosition - 1);
-                        this.selectionEnd.set(this.paragraphIndex, this.caretPosition);
-                    } else if (this.paragraphIndex > 0) {
-                        this.selectionStart.set(this.paragraphIndex - 1, this.textParagraphs[this.paragraphIndex - 1].length);
-                        this.selectionEnd.set(this.paragraphIndex, this.caretPosition);
-                    }
-                } else {
-                    assert(this.selectionEnd.isPositioned());
-                    if ((this.selectionStart.paragraphIndex === this.paragraphIndex)
-                        && (this.selectionStart.offset === this.caretPosition)) {
-                        if (this.selectionStart.offset !== 0) {
-                            this.selectionStart.offset--;
-                        } else if (this.paragraphIndex !== 0) {
-                            this.selectionStart.set(this.paragraphIndex - 1, this.textParagraphs[this.paragraphIndex - 1].length);
-                        }
-                    } else {
-                        assert((this.selectionEnd.paragraphIndex === this.paragraphIndex) && (this.selectionEnd.offset === this.caretPosition));
-                        if (this.selectionEnd.offset !== 0) {
-                            this.selectionEnd.offset--;
-                        } else if (this.paragraphIndex !== 0) {
-                            this.selectionEnd.set(this.paragraphIndex - 1, this.textParagraphs[this.paragraphIndex - 1].length);
-                        }
-                    }
+                if (position.x !== 0) {
+                    position.set(position.x - 1, position.y);
+                } else if (position.y !== 0) {
+                    let previousRow = position.y - 1;
+                    position.set(this.textRows[previousRow].length, previousRow);
                 }
                 break;
             case this.CaretMovement.RIGHT:
-                if (!this.selectionStart.isPositioned()) {
-                    if (this.caretPosition !== this.currentParagraph().length) {
-                        this.selectionStart.set(this.paragraphIndex, this.caretPosition);
-                        this.selectionEnd.set(this.paragraphIndex, this.caretPosition + 1);
-                    } else if (this.paragraphIndex < this.textParagraphs.length - 1) {
-                        this.selectionStart.set(this.paragraphIndex, this.caretPosition);
-                        this.selectionEnd.set(this.paragraphIndex + 1, 0);
-                    }
-                } else {
-                    assert(this.selectionEnd.isPositioned());
-                    if ((this.selectionStart.paragraphIndex === this.paragraphIndex)
-                        && (this.selectionStart.offset === this.caretPosition)) {
-                        if (this.selectionStart.offset !== this.currentParagraph().length) {
-                            this.selectionStart.offset++;
-                        } else {
-                            assert(this.paragraphIndex < this.textParagraphs.length - 1, "selectionStart must not be positioned at the end of the document");
-                            this.selectionStart.set(this.paragraphIndex + 1, 0);
-                        }
-                    } else {
-                        assert((this.selectionEnd.paragraphIndex === this.paragraphIndex) && (this.selectionEnd.offset === this.caretPosition));
-                        if (this.selectionEnd.offset !== this.currentParagraph().length) {
-                            this.selectionEnd.offset++;
-                        } else if (this.paragraphIndex < this.textParagraphs.length - 1) {
-                            this.selectionEnd.set(this.paragraphIndex + 1, 0);
-                        }
-                    }
+                if (position.x !== this.currentRow().length) {
+                    position.set(position.x + 1, position.y);
+                } else if (position.y !== this.textRows.length - 1) {
+                    position.set(0, position.y + 1);
                 }
                 break;
             case this.CaretMovement.UP:
+                if (position.y !== 0) {
+                    let previousRow = position.y - 1;
+                    position.set(Math.min(this.textRows[previousRow].length, this.desiredCaretX), previousRow);
+                }
                 break;
             case this.CaretMovement.DOWN:
+                if (position.y !== this.textRows.length - 1) {
+                    let nextRow = position.y + 1;
+                    position.set(Math.min(this.textRows[nextRow].length, this.desiredCaretX), nextRow);
+                }
                 break;
             case this.CaretMovement.WORDLEFT:
                 break;
             case this.CaretMovement.WORDRIGHT:
                 break;
             case this.CaretMovement.HOME:
-                if (!this.selectionStart.isPositioned()) {
-                    this.selectionStart.set(this.paragraphIndex, 0);
-                    this.selectionEnd.set(this.paragraphIndex, this.caretPosition);
-                } else {
-                    if (this.selectionStart.paragraphIndex === this.paragraphIndex) {
-                        if (this.selectionStart.offset === this.caretPosition) {
-                            this.selectionStart.set(this.paragraphIndex, 0);
-                        } else {
-                            assert(this.selectionEnd.offset === this.caretPosition, 
-                                "If the caret is in the current paragraph, it must be at either start or end selection positions");
-                            this.selectionEnd.set(this.paragraphIndex, this.selectionStart.offset);
-                            this.selectionStart.set(this.paragraphIndex, 0);
-                        }
-                    }
-
-                }
+                position.set(0, position.y);
                 break;
             case this.CaretMovement.END:
+                let selectionRow = position.y;
+                position.set(this.textRows[selectionRow].length, selectionRow);
                 break;
 
             default:
-                assert(false, "Invalid caret movement");
+                assert(false, "Invalid position movement");
         }
 
-        if (this.selectionStart.equals(this.selectionEnd)) {
+    }
+
+    isHorizontalMovement(movement) {
+        return movement === this.CaretMovement.LEFT ||
+            movement === this.CaretMovement.RIGHT ||
+            movement === this.CaretMovement.HOME ||
+            movement === this.CaretMovement.END;
+    }
+
+    updateSelection(movement) {
+        this.selection.ensureSelection(this.caretPosition.x, this.caretPosition.y);
+        this.movePosition(this.selection.focus, movement);
+
+        if (this.selection.isEmpty()) {
             this.clearSelection();
         }
     }
 
     clearSelection() {
-        this.selectionStart.unposition();
-        this.selectionEnd.unposition();
+        this.selection.unposition();
     }
 
     moveCaret(movement, shift) {
         if (shift) {
             this.updateSelection(movement);
+            this.movePosition(this.caretPosition, movement);
         } else {
-            this.clearSelection();
+            if (this.selection.anchor.isPositioned()) {
+                this.clearSelection();
+            }
+            this.movePosition(this.caretPosition, movement);
         }
 
-        switch (movement) {
-            case this.CaretMovement.LEFT:
-                if (this.caretPosition > 0) {
-                    this.caretPosition--;
-                } else {
-                    assert(this.caretPosition === 0, "Caret position must be 0 or positive");
-                    if (this.paragraphIndex > 0) {
-                        this.paragraphIndex--;
-                        this.caretPosition = this.currentParagraph().length;
-                    }
-                }
-                this.desiredCaretPosition = this.caretPosition;
-                break;
-            case this.CaretMovement.RIGHT:
-                if (this.caretPosition < this.currentParagraph().length) {
-                    this.caretPosition++;
-                } else {
-                    assert(this.caretPosition === this.currentParagraph().length, "Caret position must be less or equal to current paragraph length");
-                    if (this.paragraphIndex < this.textParagraphs.length - 1) {
-                        this.paragraphIndex++;
-                        this.caretPosition = 0;
-                    }
-                }
-                this.desiredCaretPosition = this.caretPosition;
-                break;
-            case this.CaretMovement.UP:
-                if (this.paragraphIndex > 0) {
-                    this.paragraphIndex--;
-                    this.caretPosition = Math.min(this.currentParagraph().length, this.desiredCaretPosition);
-                }
-                break;
-            case this.CaretMovement.DOWN:
-                if (this.paragraphIndex < this.textParagraphs.length - 1) {
-                    this.paragraphIndex++;
-                    this.caretPosition = Math.min(this.currentParagraph().length, this.desiredCaretPosition);
-                }
-                break;
-            case this.CaretMovement.WORDLEFT:
-                break;
-            case this.CaretMovement.WORDRIGHT:
-                break;
-            case this.CaretMovement.HOME:
-                this.caretPosition = 0;
-                this.desiredCaretPosition = this.caretPosition;
-                break;
-            case this.CaretMovement.END:
-                this.caretPosition = this.currentParagraph().length;
-                this.desiredCaretPosition = this.caretPosition;
-                break;
-
-            default:
-                assert(false, "Invalid caret movement");
+        if (this.isHorizontalMovement(movement)) {
+            this.desiredCaretX = this.caretPosition.x;
         }
     }
 
     backspace(shift, control) {
-        if (this.caretPosition !== 0) {
-            this.currentParagraph().splice(this.caretPosition - 1, 1);
-            this.caretPosition--;
-            this.desiredCaretPosition = this.caretPosition;
-        } else if (this.paragraphIndex !== 0) {
-            let currentParagraph = this.currentParagraph();
-            let endOfPrevParagraph = this.textParagraphs[this.paragraphIndex - 1].length;
-            this.textParagraphs.splice(this.paragraphIndex, 1);
-            this.paragraphIndex--;
-            this.textParagraphs[this.paragraphIndex] = this.currentParagraph().concat(currentParagraph);
+        if (!this.selection.isPositioned()) {
+            if (this.caretPosition.x !== 0) {
+                this.currentRow().splice(this.caretPosition.x - 1, 1);
+                this.caretPosition.x--;
+                this.desiredCaretX = this.caretPosition.x;
+            } else if (this.caretPosition.y !== 0) {
+                let currentRow = this.currentRow();
+                let endOfPrevRow = this.textRows[this.caretPosition.y - 1].length;
+                this.textRows.splice(this.caretPosition.y, 1);
+                this.caretPosition.y--;
+                this.textRows[this.caretPosition.y] = this.currentRow().concat(currentRow);
 
-            this.caretPosition = endOfPrevParagraph;
-            this.desiredCaretPosition = this.caretPosition;
+                this.caretPosition.x = endOfPrevRow;
+                this.desiredCaretX = this.caretPosition.x;
+            }
+        } else {
+            this.updateText("");
+            this.caretPosition.assign(this.selection.start());
+            this.clearSelection();
         }
-
     }
 
     delete(shift, control) {
-        if (this.caretPosition !== this.currentParagraph().length) {
-            this.currentParagraph().splice(this.caretPosition, 1);
-        } else if (this.paragraphIndex < this.textParagraphs.length - 1) {
-            let nextParagraph = this.textParagraphs[this.paragraphIndex + 1];
-            this.textParagraphs.splice(this.paragraphIndex + 1, 1);
-            this.textParagraphs[this.paragraphIndex] = this.currentParagraph().concat(nextParagraph);
+        if (!this.selection.isPositioned()) {
+            if (shift) {
+                this.textRows.splice(this.caretPosition.y, 1);
+                if (this.caretPosition.y === this.textRows.length) {
+                    this.textRows.push([]);
+                }
+                this.caretPosition.set(0, this.caretPosition.y);
+            } else {
+                if (this.caretPosition.x !== this.currentRow().length) {
+                    this.currentRow().splice(this.caretPosition.x, 1);
+                } else if (this.caretPosition.y < this.textRows.length - 1) {
+                    let nextRow = this.textRows[this.caretPosition.y + 1];
+                    this.textRows.splice(this.caretPosition.y + 1, 1);
+                    this.textRows[this.caretPosition.y] = this.currentRow().concat(nextRow);
+                }
+            }
+        } else {
+            this.replaceSelection("");
+            this.caretPosition.assign(this.selection.start());
+            this.clearSelection();
         }
     }
 
-    addParagraph() {
-        // Add a new paragraph at paragraph index + 1
-        let currentParagraph = this.currentParagraph();
-        let tailCurrentParagraph = currentParagraph.splice(this.caretPosition, currentParagraph.length);
+    replaceSelection(replacementText) {
+        let start = this.selection.start();
+        let end = this.selection.end();
+        let endRow = this.textRows[end.y];
+        let sequenceAfterEnd = endRow.splice(end.x, endRow.length - end.x);
+        let startRow = this.textRows[start.y];
+        startRow.splice(start.x, startRow.length - start.x);
+        this.textRows[start.y] = startRow.concat(sequenceAfterEnd);
+        this.textRows.splice(start.y + 1, end.y);
+    }
 
-        this.paragraphIndex++;
-        this.caretPosition = 0;
-        this.desiredCaretPosition = this.caretPosition;
-        this.textParagraphs.splice(this.paragraphIndex, 0, tailCurrentParagraph);
+    addRow() {
+        // Add a new row at caret y + 1
+        let currentRow = this.currentRow();
+        let tailCurrentRow = currentRow.splice(this.caretPosition.x, currentRow.length);
+
+        this.caretPosition.set(0, this.caretPosition.y + 1);
+        this.desiredCaretX = this.caretPosition.x;
+        this.textRows.splice(this.caretPosition.y, 0, tailCurrentRow);
     }
 }
 
@@ -439,7 +460,7 @@ class EditController {
                     this.view.queueUpdate();
                     break;
                 case "Enter":
-                    this.model.addParagraph();
+                    this.model.addRow();
                     this.view.queueUpdate();
                     break;
                 case "Backspace":
@@ -472,6 +493,8 @@ class EditController {
 
         editContext.addEventListener("textupdating", (e => {
             console.log("textupdating: " + e.value)
+            // TODO: consume offsets from event instead of relying on 
+            // current selection state.
             this.model.updateText(e.value);
             this.view.queueUpdate();
         }).bind(this));
@@ -484,11 +507,6 @@ class EditController {
         editContext.addEventListener("formatupdating", e => { console.log("formatupdating") });
         editContext.addEventListener("focusremoved", e => { console.log("focusremoved") });
         editContext.addEventListener("layoutrequested", e => { console.log("layoutrequested") });
-    }
-    
-    moveLeft() {
-        this.model.setCaretPosition(this.model.getCaretPosition() - 1);
-        this.view.queueUpdate();
     }
 }
 

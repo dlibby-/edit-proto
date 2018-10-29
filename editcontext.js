@@ -48,6 +48,10 @@ let EditContext = (() => {
         hasFocus() {
             return this.nativeEditContext === document.activeElement;
         }
+
+        textChanged() {
+
+        }
     }
 
     return EditContext;
