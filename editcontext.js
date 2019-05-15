@@ -1,3 +1,21 @@
+let EditContextTextRange = (() => {
+    class EditContextTextRange {
+        constructor(start, end) {
+            this.start = start;
+            this.end = end;
+        }
+
+        assign(other) {
+            assert(other.__proto__ === EditContextTextRange.prototype, "Can only assign EditContextTextRange to another EditContextTextRange object");
+            this.start = other.start;
+            this.end = other.end;
+        }
+    }
+
+    return EditContextTextRange;
+})();
+
+
 let EditContext = (() => {
     class EditContext extends EventTarget {
         constructor() {
@@ -12,7 +30,7 @@ let EditContext = (() => {
                 // character.
                 if (evt.key !== "Enter") {
                     let textUpdatingEvent = new Event("textupdating");
-                    textUpdatingEvent.value = evt.key;
+                    textUpdatingEvent.text = evt.key;
                     this.dispatchEvent(textUpdatingEvent);
                 }
                 evt.preventDefault();
@@ -45,6 +63,14 @@ let EditContext = (() => {
             this.nativeEditContext.focus();
         }
 
+        blur() {
+            this.nativeEditContext.blur();
+        }
+
+        updateSelectionRange(selectionRange) {
+            this.selectionRange.assign(selectionRange);
+        }
+
         hasFocus() {
             return this.nativeEditContext === document.activeElement;
         }
@@ -56,3 +82,4 @@ let EditContext = (() => {
 
     return EditContext;
 })()
+

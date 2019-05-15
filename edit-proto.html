@@ -104,39 +104,33 @@ class EditableView {
 }
 
 class Position {
-    constructor(x, y) {
+    constructor(x) {
         x = (x !== undefined) ? x : -1;
-        y = (y !== undefined) ? y : -1;
-        this.set(x, y);
+        this.set(x);
     }
 
     unposition() {
-        this.set(-1, -1);
+        this.set(-1);
     }
 
     isPositioned() {
-        assert((this.y === -1) === (this.x === -1), "x and y positioning must be in sync");
-        return (this.y !== -1 && this.x !== -1);
+        return (this.x !== -1);
     }
 
     equals(other) {
         assert(other.__proto__ === Position.prototype, "Can only test equality against another Position object");
-        return (this.y === other.y && this.x === other.x);
+        return this.x === other.x;
     }
 
     assign(other) {
         assert(other.__proto__ === Position.prototype, "Can only assign positions to another Position object");
         this.x = other.x;
-        this.y = other.y;
     }
 
-    set(x, y) {
+    set(x) {
         assert(typeof x === "number", "Position.x must be a number");
-        assert(typeof y === "number", "Position.y must be a number");
         assert(x !== NaN, "Position.x must not be NaN");
-        assert(y !== NaN, "Position.y must not be NaN");
         this.x = x;
-        this.y = y;
     }
 }
 
@@ -159,10 +153,10 @@ class Selection {
         return this.anchor.isPositioned();
     }
 
-    ensureSelection(x, y) {
+    ensureSelection(x) {
         if (!this.anchor.isPositioned()) {
-            this.anchor.set(x, y);
-            this.focus.set(x, y);
+            this.anchor.set(x);
+            this.focus.set(x);
         }
     }
 
@@ -170,13 +164,7 @@ class Selection {
     // information about the anchor or focus.
     start() {
         if (this.anchor.isPositioned()) {
-            if (this.focus.y < this.anchor.y) {
-                return this.focus;
-            } else if (this.focus.y > this.anchor.y) {
-                return this.anchor;
-            } else {
-                return (this.focus.x < this.anchor.x) ? this.focus : this.anchor;
-            }
+            return (this.focus.x < this.anchor.x) ? this.focus : this.anchor;
         } else {
             return null;
         }
@@ -193,9 +181,8 @@ class Selection {
 
 class EditModel {
     constructor(editContext) {
-        this.textRows = [];
-        this.caretPosition = new Position(0, 0);
-        this.textRows[this.caretPosition.y] = [];
+        this.text = [];
+        this.caretPosition = new Position(0);
         this.desiredCaretX = 0;
 
         this.selection = new Selection();
@@ -206,90 +193,99 @@ class EditModel {
     asHtml() {
         let html = "";
         let selectionStart = this.selection.start();
+        selectionStart = (selectionStart) ? selectionStart.x : -1;
         let selectionEnd = this.selection.end();
-        this.textRows.forEach((row, index) => {
-
-            let selectionStartX = (selectionStart && selectionStart.y === index) ? selectionStart.x : -1;
-            let selectionEndX = (selectionEnd && selectionEnd.y === index) ? selectionEnd.x : -1;
+        selectionEnd = (selectionEnd) ? selectionEnd.x : -1;
+        this.text.forEach((character, index) => {
             let offsetRealized = 0;
-            if (selectionStart) {
-                if (selectionStartX !== -1) {
-                    // Lay down start selection element
-                    html += row.slice(0, selectionStartX).join('');
-                    if (selectionStart === this.selection.focus) {
-                        html += "<span class='caret'></span>";
-                    }
-                    html += "<span class='selection'>";
-                    offsetRealized = selectionStartX;
-                }
-                if (selectionEndX !== -1) {
-                    html += row.slice(offsetRealized, selectionEndX).join('');
-                    html += "</span>";
-                    if (selectionEnd === this.selection.focus) {
-                        html += "<span class='caret'></span>";
-                    }
-                    offsetRealized = selectionEndX;
-                }
+            if (this.caretPosition.x === index) {
+                html += "<span class='caret'></span>";
+            }
+
+            if (selectionStart === index) {
+                html += "<span class='selection'>";
+            }
+
+            if (character !== "\n") {
+                html += character;
             } else {
-                if (this.caretPosition.y === index) {
-                    html += row.slice(0, this.caretPosition.x).join('');
-                    html += "<span class='caret'></span>";
-                    offsetRealized = this.caretPosition.x;
-
-                }
+                html += "<br>";
             }
 
-            if (offsetRealized != row.length) {
-                html += row.slice(offsetRealized, row.length).join('');
+            if (selectionEnd - 1 === index) {
+                html += "</span>";
             }
-
-            html += "<br>";
         })
+
+        if (this.caretPosition.x === this.text.length) {
+            html += "<span class='caret'></span>";
+        }
 
         return html;
     }
 
-    updateText(text) {
-        this.textRows[this.caretPosition.y].splice(this.caretPosition.x, 0, text);
-        this.caretPosition.set(this.caretPosition.x + text.length, this.caretPosition.y);
-        this.desiredCaretX = this.caretPosition.x;
+    updateText(text, start, end) {
+        if (start === end) {
+            let insertPosition = start;
+            for (let i = 0; i < text.length; i++) {
+                this.text.splice(insertPosition, 0, text.charAt(i));
+                insertPosition++;
+            }
+            assert(insertPosition === start + text.length, "We must have inserted text.length characters");
+            this.caretPosition.set(start + text.length);
+        }
+        this.updateDesirectCaretColumn();
+    }
+
+    updateDesirectCaretColumn() {
+        this.desiredCaretX = this.getCurrentCaretColumn()
+        assert(this.desiredCaretX >= 0, "desired caret column must be >= 0");
+    }
+
+    getCurrentCaretColumn() {
+        return this.caretPosition.x - this.getCurrentRowBeginIndex();
+    }
+    
+    getCurrentRowBeginIndex() {
+        return this.text.lastIndexOf("\n", this.caretPosition.x - 1) + 1;
     }
 
     getCaretPosition() {
         return this.caretPosition;
     }
 
-    currentRow() {
-        return this.textRows[this.caretPosition.y];
-    }
-
     movePosition(position, movement) {
         switch (movement) {
             case this.CaretMovement.LEFT:
                 if (position.x !== 0) {
-                    position.set(position.x - 1, position.y);
-                } else if (position.y !== 0) {
-                    let previousRow = position.y - 1;
-                    position.set(this.textRows[previousRow].length, previousRow);
+                    position.set(position.x - 1);
                 }
                 break;
             case this.CaretMovement.RIGHT:
-                if (position.x !== this.currentRow().length) {
-                    position.set(position.x + 1, position.y);
-                } else if (position.y !== this.textRows.length - 1) {
-                    position.set(0, position.y + 1);
+                if (position.x !== this.text.length) {
+                    position.set(position.x + 1);
                 }
                 break;
             case this.CaretMovement.UP:
-                if (position.y !== 0) {
-                    let previousRow = position.y - 1;
-                    position.set(Math.min(this.textRows[previousRow].length, this.desiredCaretX), previousRow);
+                let rowBegin = this.text.lastIndexOf("\n", position.x - 1);
+                if (rowBegin !== -1 && rowBegin !== 0) {
+                    let previousRowBegin = this.text.lastIndexOf("\n", rowBegin - 1);
+                    if (previousRowBegin === -1) {
+                        previousRowBegin = 0;
+                    }
+
+                    let previousRowLength = rowBegin - previousRowBegin;
+                    position.set(previousRowBegin + Math.min(this.desiredCaretX, previousRowLength));
                 }
                 break;
             case this.CaretMovement.DOWN:
-                if (position.y !== this.textRows.length - 1) {
-                    let nextRow = position.y + 1;
-                    position.set(Math.min(this.textRows[nextRow].length, this.desiredCaretX), nextRow);
+                let nextNewline = this.text.indexOf("\n", this.caretPosition.x);
+                if (nextNewline !== -1) {
+                    let nextRowBegin = nextNewline + 1;
+                    let nextNextNewline = this.text.indexOf("\n", nextRowBegin);
+                    let nextRowEnd = nextNextNewline === -1 ? this.text.length : nextNextNewline;
+                    let nextRowLength = nextRowEnd - nextRowBegin;
+                    position.set(nextRowBegin + Math.min(this.desiredCaretX, nextRowLength));
                 }
                 break;
             case this.CaretMovement.WORDLEFT:
@@ -297,11 +293,16 @@ class EditModel {
             case this.CaretMovement.WORDRIGHT:
                 break;
             case this.CaretMovement.HOME:
-                position.set(0, position.y);
+                let rowBeginIndex = this.text.lastIndexOf("\n", position.x - 1);
+                if (rowBeginIndex === -1) {
+                    rowBeginIndex = 0;
+                }
+                position.set(rowBeginIndex);
                 break;
             case this.CaretMovement.END:
-                let selectionRow = position.y;
-                position.set(this.textRows[selectionRow].length, selectionRow);
+                let nextNewLine = this.text.indexOf("\n", position.x);
+                let endRow = nextNewLine === -1 ? this.text.length : nextNewLine;
+                position.set(endRow);
                 break;
 
             default:
@@ -318,7 +319,7 @@ class EditModel {
     }
 
     updateSelection(movement) {
-        this.selection.ensureSelection(this.caretPosition.x, this.caretPosition.y);
+        this.selection.ensureSelection(this.caretPosition.x);
         this.movePosition(this.selection.focus, movement);
 
         if (this.selection.isEmpty()) {
@@ -342,28 +343,19 @@ class EditModel {
         }
 
         if (this.isHorizontalMovement(movement)) {
-            this.desiredCaretX = this.caretPosition.x;
+            this.updateDesirectCaretColumn();
         }
     }
 
     backspace(shift, control) {
         if (!this.selection.isPositioned()) {
             if (this.caretPosition.x !== 0) {
-                this.currentRow().splice(this.caretPosition.x - 1, 1);
+                this.text.splice(this.caretPosition.x - 1, 1);
                 this.caretPosition.x--;
-                this.desiredCaretX = this.caretPosition.x;
-            } else if (this.caretPosition.y !== 0) {
-                let currentRow = this.currentRow();
-                let endOfPrevRow = this.textRows[this.caretPosition.y - 1].length;
-                this.textRows.splice(this.caretPosition.y, 1);
-                this.caretPosition.y--;
-                this.textRows[this.caretPosition.y] = this.currentRow().concat(currentRow);
-
-                this.caretPosition.x = endOfPrevRow;
-                this.desiredCaretX = this.caretPosition.x;
+                this.updateDesirectCaretColumn();
             }
         } else {
-            this.updateText("");
+            this.replaceSelection("");
             this.caretPosition.assign(this.selection.start());
             this.clearSelection();
         }
@@ -371,20 +363,10 @@ class EditModel {
 
     delete(shift, control) {
         if (!this.selection.isPositioned()) {
-            if (shift) {
-                this.textRows.splice(this.caretPosition.y, 1);
-                if (this.caretPosition.y === this.textRows.length) {
-                    this.textRows.push([]);
-                }
-                this.caretPosition.set(0, this.caretPosition.y);
+            if (!shift) {
+                this.text.splice(this.caretPosition.x, 1);
             } else {
-                if (this.caretPosition.x !== this.currentRow().length) {
-                    this.currentRow().splice(this.caretPosition.x, 1);
-                } else if (this.caretPosition.y < this.textRows.length - 1) {
-                    let nextRow = this.textRows[this.caretPosition.y + 1];
-                    this.textRows.splice(this.caretPosition.y + 1, 1);
-                    this.textRows[this.caretPosition.y] = this.currentRow().concat(nextRow);
-                }
+                // TODO: Implement shift-delete remove line
             }
         } else {
             this.replaceSelection("");
@@ -396,22 +378,12 @@ class EditModel {
     replaceSelection(replacementText) {
         let start = this.selection.start();
         let end = this.selection.end();
-        let endRow = this.textRows[end.y];
-        let sequenceAfterEnd = endRow.splice(end.x, endRow.length - end.x);
-        let startRow = this.textRows[start.y];
-        startRow.splice(start.x, startRow.length - start.x);
-        this.textRows[start.y] = startRow.concat(sequenceAfterEnd);
-        this.textRows.splice(start.y + 1, end.y);
+        this.text.splice(start.x, end.x - start.x);
     }
 
     addRow() {
-        // Add a new row at caret y + 1
-        let currentRow = this.currentRow();
-        let tailCurrentRow = currentRow.splice(this.caretPosition.x, currentRow.length);
-
-        this.caretPosition.set(0, this.caretPosition.y + 1);
-        this.desiredCaretX = this.caretPosition.x;
-        this.textRows.splice(this.caretPosition.y, 0, tailCurrentRow);
+        this.updateText("\n", this.caretPosition.x, this.caretPosition.x);
+        this.desiredCaretX = 0;
     }
 }
 
@@ -479,6 +451,7 @@ class EditController {
                     break;
             }
         });
+
         editContext.addEventListener("keyup", e => {
             console.log(`keyup: ${e.key}`)
             switch (e.key) {
@@ -493,7 +466,7 @@ class EditController {
 
         editContext.addEventListener("textupdating", (e => {
             console.log("textupdating: " + e.value)
-            this.model.updateText(e.value);
+            this.model.updateText(e.text, e.start, e.end);
             this.view.queueUpdate();
         }).bind(this));
 
